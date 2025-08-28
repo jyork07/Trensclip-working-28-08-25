@@ -1,0 +1,161 @@
+# TrendClip Desktop - Git Ignore Rules
+
+# User-specific installation directory
+TrendClipOne/
+%USERPROFILE%/TrendClipOne/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs and temporary files
+*.log
+logs/
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Secrets and credentials
+.secrets/
+client_secret.json
+token.json
+*.key
+*.pem
+*.p12
+
+# Generated content
+dist/
+uploads/
+processed/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Windows specific
+*.lnk
+*.exe
+*.msi
+*.zip
+*.rar
+
+# PowerShell specific
+*.ps1.log
+*.ps1.tmp
+
+# Configuration overrides
+config.local.yaml
+settings.local.json
+
+# Test files
+test_*.mp4
+test_*.txt
+test_clips/
+
+# Analytics and data files
+analytics.csv
+*.csv
+data/*.json
+queue.json
+history.json
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Chocolatey and package manager files
+chocolatey/
+packages/
+
+# FFmpeg and tools
+tools/ffmpeg/
+tools/yt-dlp/
+
+# Node.js (if any frontend components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Documentation builds
+docs/_build/
+site/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
