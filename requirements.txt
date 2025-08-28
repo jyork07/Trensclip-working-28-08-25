@@ -1,0 +1,17 @@
+dash>=2.16
+plotly>=5.22
+dash-bootstrap-components>=1.5
+requests>=2.32
+pandas>=2.2
+PyYAML>=6.0
+tenacity>=8.3
+google-api-python-client>=2.153
+google-auth>=2.33
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+moviepy>=1.0.3
+pywebview>=4.4
+yt-dlp>=2025.1.1
+opencv-python>=4.8.0
+pillow>=10.0.0
+numpy>=1.24.0

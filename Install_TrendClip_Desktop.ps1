@@ -525,6 +525,367 @@ function Create-TrendClipShortcuts {
   }
 }
 
+# Write dashboard and desktop Python files if missing (adds in-Dash API paste UI)
+function Write-TrendClipAppFiles {
+  Write-Log "Ensuring dashboard and desktop entry files exist..."
+
+  $dashboardPath = Join-Path $BASE 'TrendClipDashboard_Standalone.py'
+  $desktopPath   = Join-Path $BASE 'TrendClipDesktop.py'
+
+  # Dash app with inline API wizard (links + paste/upload client_secret.json)
+  if (-not (Test-Path -LiteralPath $dashboardPath) -or $RebuildDash) {
+    Write-Log "Writing updated dashboard (API links + paste UI)"
+    $dashboard_py = @'
+"""TrendClip One — standalone Dash app (desktop). API tab lets you paste/upload client_secret.json inline."""
+from __future__ import annotations
+import os, sys, pathlib, subprocess, json
+from datetime import datetime
+import yaml
+from dash import Dash, dcc, html, Input, Output, State
+import plotly.express as px
+
+BASE = pathlib.Path(os.environ.get("TRENDCLIP_BASE") or pathlib.Path(__file__).resolve().parent)
+ASSETS_DIR = BASE / "assets"
+LOGS_DIR = BASE / "logs"
+DIST_DIR = BASE / "dist"
+SECRETS_DIR = BASE / ".secrets"
+PY_EXE = os.environ.get("TRENDCLIP_VENV_PY", sys.executable)
+for p in (ASSETS_DIR, LOGS_DIR, DIST_DIR, SECRETS_DIR): p.mkdir(parents=True, exist_ok=True)
+
+cfg_path = BASE / "config.yaml"; CONFIG = {}
+if cfg_path.exists():
+    with open(cfg_path, "r", encoding="utf-8") as f: CONFIG = yaml.safe_load(f) or {}
+port = int(os.environ.get(CONFIG.get("app",{}).get("port_env","TRENDCLIP_PORT"), os.environ.get("TRENDCLIP_PORT","8788")))
+host = os.environ.get(CONFIG.get("app",{}).get("bind_env","TRENDCLIP_BIND"), "127.0.0.1")
+
+server = __import__("flask").Flask(__name__)
+@server.get("/healthz")
+def healthz():
+    from datetime import datetime as _dt
+    return {"ok": True, "time": _dt.utcnow().isoformat()}, 200
+
+app = Dash(__name__, server=server, assets_folder=str(ASSETS_DIR), suppress_callback_exceptions=True, title="TrendClip One")
+def btn(i,l): return html.Button(l, id=i, className="btn", style={"marginRight":"8px","marginTop":"6px"})
+
+header = html.Div(className="container", children=[
+    html.H1("TrendClip One"),
+    html.P("Desktop build — autopilot, uploader, self-test, packager, and API setup"),
+    html.Div([html.Span("Base: "), html.Code(str(BASE))]),
+])
+
+overview_tab = html.Div(className="container", children=[
+    html.Div(className="card", children=[
+        html.H3("Overview"),
+        dcc.Graph(id="demo-graph", figure=px.line(x=list(range(10)), y=[i*i for i in range(10)], title="Demo chart")),
+    ])
+])
+
+selftest_tab = html.Div(className="container", children=[
+    html.Div(className="card", children=[
+        html.H3("Self-Test"),
+        btn("btn-selftest","Run Self-Test"), btn("btn-open-logs","Open Logs Folder"),
+        html.Div(id="selftest-output", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+        dcc.Graph(id="selftest-figure"),
+    ])
+])
+
+# Inline API wizard (links + paste/upload client_secret.json, clear token, test auth)
+api_tab = html.Div(className="container", children=[
+    html.Div(className="card", children=[
+        html.H3("API & Auth"),
+        html.P("Create a Google OAuth client (Desktop) and place client_secret.json into .secrets. You can paste JSON or upload the file here."),
+        html.Ul([
+            html.Li(html.A("Google Cloud Console", href="https://console.cloud.google.com/", className="link", target="_blank")),
+            html.Li(html.A("Create OAuth client (Desktop)", href="https://console.cloud.google.com/apis/credentials/oauthclient", className="link", target="_blank")),
+            html.Li(html.A("Enable YouTube Data API v3", href="https://console.cloud.google.com/apis/library/youtube.googleapis.com", className="link", target="_blank")),
+        ]),
+        html.Label("Paste client_secret.json contents"),
+        dcc.Textarea(id="client-json", value="", style={"width":"100%","height":"140px"}),
+        html.Div(style={"marginTop":"8px"}),
+        html.Label("Or select client_secret.json file"),
+        dcc.Upload(id="upload-client-json", children=html.Div(["Drag & Drop or ", html.A("Select file")]), multiple=False),
+        html.Div(style={"marginTop":"8px"}),
+        html.Label("Or paste a file path to client_secret.json"),
+        dcc.Input(id="client-path", type="text", value="", style={"width":"100%"}),
+        html.Div(style={"marginTop":"10px"}, children=[btn("btn-save-secret","Save client_secret.json"), btn("btn-clear-token","Clear token.json"), btn("btn-test-auth","Test YouTube Login"), btn("btn-open-secrets","Open .secrets")]),
+        html.Div(id="api-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+    ])
+])
+
+upload_tab = html.Div(className="container", children=[
+    html.Div(className="card", children=[
+        html.H3("YouTube Upload (Shorts)"),
+        dcc.Upload(id="upload-video", children=html.Div(["Drag & Drop or ", html.A("Select video")]), multiple=False),
+        html.Br(), html.Label("Title"), dcc.Input(id="yt-title", type="text", value="My TrendClip", style={"width":"100%"}),
+        html.Br(), html.Label("Description"), dcc.Textarea(id="yt-desc", value="", style={"width":"100%","height":"100px"}),
+        html.Br(), html.Label("Tags (comma separated)"), dcc.Input(id="yt-tags", type="text", value="trendclip,shorts", style={"width":"100%"}),
+        html.Br(), html.Label("Privacy"), dcc.Dropdown(id="yt-privacy", options=[{"label":v,"value":v} for v in ("private","unlisted","public")], value="private"),
+        html.Br(), btn("btn-upload","Upload"),
+        html.Div(id="upload-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+    ])
+])
+
+pack_tab = html.Div(className="container", children=[
+    html.Div(className="card", children=[
+        html.H3("Packager"), html.P("Create a distributable ZIP (no venv/tokens)."),
+        btn("btn-pack","Create ZIP"), html.Div(id="pack-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+    ])
+])
+
+autopilot_tab = html.Div(className="container", children=[
+    html.Div(className="card", children=[
+        html.H3("Autopilot"),
+        html.P("Edit urls.txt, then run one cycle. Outputs to /dist."),
+        btn("btn-open-urls","Open urls.txt"), btn("btn-open-dist","Open dist Folder"), btn("btn-do1","Run Once"),
+        html.Div(id="do1-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+    ])
+])
+
+app.layout = html.Div([
+    header,
+    dcc.Tabs(id="tabs", value="tab-overview", children=[
+        dcc.Tab(label="Overview", value="tab-overview"),
+        dcc.Tab(label="Self-Test", value="tab-selftest"),
+        dcc.Tab(label="API & Auth", value="tab-api"),
+        dcc.Tab(label="YouTube Upload", value="tab-upload"),
+        dcc.Tab(label="Packager", value="tab-pack"),
+        dcc.Tab(label="Autopilot", value="tab-autopilot"),
+    ]),
+    html.Div(id="tab-content")
+])
+
+@app.callback(Output("tab-content", "children"), Input("tabs", "value"))
+def render_tab(tab):
+    return {
+        "tab-selftest": selftest_tab,
+        "tab-api": api_tab,
+        "tab-upload": upload_tab,
+        "tab-pack": pack_tab,
+        "tab-autopilot": autopilot_tab,
+    }.get(tab, overview_tab)
+
+@app.callback(Output("selftest-output", "children"), Output("selftest-figure", "figure"), Input("btn-selftest", "n_clicks"), prevent_initial_call=True)
+def run_selftest(n):
+    try:
+        (LOGS_DIR / "selftest.txt").write_text(f"Self-test at {datetime.now().isoformat()}\n", encoding="utf-8")
+        fig = px.scatter(x=list(range(30)), y=[i * 0.5 for i in range(30)], title="Self-test scatter")
+        return "✅ Self-test passed", fig
+    except Exception as e:
+        fig = px.scatter(x=[0], y=[0], title="Self-test error")
+        return f"❌ Self-test failed: {e}", fig
+
+def _open_path(p: pathlib.Path) -> str:
+    try:
+        if os.name == "nt": os.startfile(str(p))  # type: ignore
+        else: subprocess.Popen(["open" if sys.platform=="darwin" else "xdg-open", str(p)])
+        return f"Opened: {p}"
+    except Exception as e:
+        return f"Open failed: {e}"
+
+@app.callback(Output("api-status", "children"), Input("btn-open-secrets", "n_clicks"), prevent_initial_call=True)
+def open_secrets(n):
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    return _open_path(SECRETS_DIR)
+
+def _save_client_json_from_text(text: str) -> str:
+    if not text.strip():
+        return "Paste JSON or upload a file."
+    try:
+        obj = json.loads(text)
+    except Exception as e:
+        return f"Invalid JSON: {e}"
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    out = SECRETS_DIR / "client_secret.json"
+    out.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    return f"✅ Saved client_secret.json → {out}"
+
+def _save_client_json_from_upload(contents: str, filename: str) -> str:
+    if not contents: return "No file provided."
+    try:
+        header, data = contents.split(",", 1)
+        import base64 as _b64
+        raw = _b64.b64decode(data)
+        obj = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        return f"Upload parse failed: {e}"
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    out = SECRETS_DIR / "client_secret.json"
+    out.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    return f"✅ Saved client_secret.json from {filename} → {out}"
+
+@app.callback(Output("api-status", "children", allow_duplicate=True),
+              Input("btn-save-secret", "n_clicks"),
+              State("client-json", "value"),
+              State("upload-client-json", "contents"),
+              State("upload-client-json", "filename"),
+              State("client-path", "value"),
+              prevent_initial_call=True)
+def save_secret(n, pasted, up_contents, up_name, path_value):
+    try:
+        if up_contents:
+            return _save_client_json_from_upload(up_contents, up_name or "upload")
+        if pasted and pasted.strip():
+            return _save_client_json_from_text(pasted)
+        if path_value and str(path_value).strip():
+            p = pathlib.Path(path_value.strip('"'))
+            if not p.exists():
+                return f"Path not found: {p}"
+            try:
+                text = p.read_text(encoding="utf-8")
+            except Exception:
+                # try binary decode
+                text = p.read_bytes().decode("utf-8", errors="ignore")
+            return _save_client_json_from_text(text)
+        return "Provide JSON (paste, upload, or path)."
+    except Exception as e:
+        return f"❌ Save failed: {e}"
+
+@app.callback(Output("api-status", "children", allow_duplicate=True), Input("btn-clear-token", "n_clicks"), prevent_initial_call=True)
+def clear_token(n):
+    try:
+        tok = SECRETS_DIR / "token.json"
+        if tok.exists(): tok.unlink()
+        return "🔄 token.json cleared."
+    except Exception as e:
+        return f"Clear failed: {e}"
+
+@app.callback(Output("api-status", "children", allow_duplicate=True), Input("btn-test-auth", "n_clicks"), prevent_initial_call=True)
+def test_auth(n):
+    try:
+        from youtube_uploader import authenticate
+        authenticate(installed_app_port=0)
+        return "✅ Auth OK. Token saved in .secrets/token.json"
+    except Exception as e:
+        return f"❌ Auth failed: {e}"
+
+import pathlib as _pl
+def _save_uploaded(contents: str, filename: str) -> _pl.Path:
+    header, data = contents.split(",", 1)
+    import base64 as _b64
+    binary = _b64.b64decode(data)
+    out_dir = DIST_DIR / "uploads"; out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / filename
+    with open(out_path, "wb") as f: f.write(binary)
+    return out_path
+
+@app.callback(Output("upload-status", "children"), Input("btn-upload", "n_clicks"),
+              State("upload-video", "contents"), State("upload-video", "filename"),
+              State("yt-title", "value"), State("yt-desc", "value"), State("yt-tags", "value"),
+              State("yt-privacy", "value"), prevent_initial_call=True)
+def handle_upload(n, contents, filename, title, desc, tags_csv, privacy):
+    try:
+        if not contents or not filename: return "Please select a video file first."
+        saved = _save_uploaded(contents, filename)
+        tags = [t.strip() for t in (tags_csv or "").split(",") if t.strip()]
+        from youtube_uploader import upload_video
+        resp = upload_video(str(saved), title=title or _pl.Path(filename).stem, description=desc or "", tags=tags, privacy_status=privacy or "private")
+        vid = resp.get("id") or (resp.get("snippet", {}) or {}).get("resourceId", {}).get("videoId")
+        return f"✅ Uploaded. Video ID: {vid or '<unknown>'}\nFile: {saved}"
+    except Exception as e:
+        return f"❌ Upload failed: {e}"
+
+@app.callback(Output("pack-status", "children"), Input("btn-pack", "n_clicks"), prevent_initial_call=True)
+def create_zip(n):
+    try:
+        import zipfile
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S"); zip_path = DIST_DIR / f"TrendClipOne_{ts}.zip"
+        include = ["TrendClipDashboard_Standalone.py","wizard.py","video_helpers.py","youtube_uploader.py","autopilot.py","jobs.py","requirements.txt","config.yaml","assets/","data/"]
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            for item in include:
+                p = BASE / item
+                if p.is_dir():
+                    for root, _, files in os.walk(p):
+                        for f in files:
+                            fp = _pl.Path(root) / f; z.write(fp, fp.relative_to(BASE))
+                elif p.exists(): z.write(p, p.relative_to(BASE))
+        try:
+            import shutil
+            desktop = pathlib.Path.home() / "Desktop"; shutil.copy2(zip_path, desktop)
+        except Exception: pass
+        return f"Created ZIP at: {zip_path}"
+    except Exception as e:
+        return f"Failed to pack: {e}"
+
+@app.callback(Output("do1-status", "children"), Input("btn-do1", "n_clicks"), prevent_initial_call=True)
+def do1(n):
+    try:
+        p = subprocess.run([PY_EXE, str(BASE / "autopilot.py")], capture_output=True, text=True, cwd=str(BASE))
+        log = (LOGS_DIR/ "autopilot.log"); tail = (log.read_text(encoding="utf-8") if log.exists() else "")[-2000:]
+        return f"Return: {p.returncode}\n--- autopilot.log (tail) ---\n{tail}"
+    except Exception as e:
+        return f"Do1 failed: {e}"
+
+@app.callback(Output("do1-status", "children", allow_duplicate=True), Input("btn-open-urls", "n_clicks"), prevent_initial_call=True)
+def open_urls(n):
+    u = BASE / "urls.txt"
+    if not u.exists(): u.write_text("# Put one URL per line (YouTube/TikTok/etc.)\n", encoding="utf-8")
+    return _open_path(u)
+
+@app.callback(Output("do1-status", "children", allow_duplicate=True), Input("btn-open-dist", "n_clicks"), prevent_initial_call=True)
+def open_dist(n): return _open_path(DIST_DIR)
+
+if __name__ == "__main__":
+    server.run(host=host, port=port, debug=False, use_reloader=False)
+'@
+    Write-TextFileUtf8 -Path $dashboardPath -Content $dashboard_py
+  }
+
+  # Desktop wrapper (pywebview) — re-create if missing or rebuild requested
+  if (-not (Test-Path -LiteralPath $desktopPath) -or $RebuildDash) {
+    Write-Log "Writing desktop wrapper (pywebview)"
+    $desktop_py = @'
+"""TrendClip Desktop wrapper — launches the Dash server and shows a native window."""
+from __future__ import annotations
+import os, threading, runpy, socket
+from pathlib import Path
+
+BASE = Path(os.environ.get("TRENDCLIP_BASE") or Path(__file__).resolve().parent)
+
+def _get_free_port(start: int = 8700, end: int = 8999) -> int:
+    import socket as _s
+    for port in range(start, end+1):
+        with _s.socket(_s.AF_INET, _s.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port)); return port
+            except OSError:
+                continue
+    raise RuntimeError("No free TCP port")
+
+port = int(os.environ.get("TRENDCLIP_PORT") or _get_free_port())
+os.environ["TRENDCLIP_PORT"] = str(port)
+os.environ.setdefault("TRENDCLIP_BIND", "127.0.0.1")
+os.environ.setdefault("TRENDCLIP_BASE", str(BASE))
+
+DASH_ENTRY = str(BASE / "TrendClipDashboard_Standalone.py")
+
+def _run_dash():
+    runpy.run_path(DASH_ENTRY, run_name="__main__")
+
+thr = threading.Thread(target=_run_dash, daemon=True); thr.start()
+
+def _wait_ready(url: str, timeout: float = 45.0) -> None:
+    import urllib.request, time
+    start = time.time(); last_err = None
+    while time.time() - start < timeout:
+        try:
+            with urllib.request.urlopen(url) as r:
+                if r.status == 200: return
+        except Exception as e:
+            last_err = e; time.sleep(0.3)
+    raise RuntimeError(f"Server not ready at {url}: {last_err}")
+
+health = f"http://{os.environ['TRENDCLIP_BIND']}:{port}/healthz"
+_wait_ready(health, timeout=45)
+
+import webview
+url = f"http://{os.environ['TRENDCLIP_BIND']}:{port}/"
+webview.create_window("TrendClip One", url, width=1200, height=800, easy_drag=False)
+webview.start()
+'@
+    Write-TextFileUtf8 -Path $desktopPath -Content $desktop_py
+  }
+}
+
 # Base paths
 $BASE   = Join-Path $env:USERPROFILE 'TrendClipOne'
 $ASSETS = Join-Path $BASE 'assets'
