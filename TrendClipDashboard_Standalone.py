@@ -9,6 +9,8 @@ import sys
 import json
 import yaml
 import logging
+import pathlib
+import base64
 from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
@@ -43,6 +45,12 @@ class TrendClipDashboard:
         self.logs_dir = self.base_path / "logs"
         self.clips_dir = self.base_path / "clips"
         self.stats_file = self.base_path / "stats" / "clipstats.csv"
+        self.secrets_dir = self.base_path / ".secrets"
+        self.dist_dir = self.base_path / "dist"
+        
+        # Ensure directories exist
+        for dir_path in [self.logs_dir, self.clips_dir, self.secrets_dir, self.dist_dir]:
+            dir_path.mkdir(parents=True, exist_ok=True)
         
         # Load configuration
         self.config = self.load_config()
@@ -106,6 +114,11 @@ class TrendClipDashboard:
             dbc.Row([
                 dbc.Col([
                     html.H1("🎯 TrendClip Desktop", className="text-center mb-4"),
+                    html.P("Desktop build — autopilot, uploader, self-test, packager, and API setup", className="text-center"),
+                    html.Div([
+                        html.Span("Base: "), 
+                        html.Code(str(self.base_path))
+                    ], className="text-center"),
                     html.Hr()
                 ])
             ]),
@@ -120,7 +133,12 @@ class TrendClipDashboard:
                 # API Setup Tab
                 dbc.Tab([
                     self.create_api_setup_tab()
-                ], label="API Setup", tab_id="api-setup"),
+                ], label="API & Auth", tab_id="api-setup"),
+                
+                # YouTube Upload Tab
+                dbc.Tab([
+                    self.create_upload_tab()
+                ], label="YouTube Upload", tab_id="upload"),
                 
                 # Trending Tab
                 dbc.Tab([
@@ -135,7 +153,12 @@ class TrendClipDashboard:
                 # Tools Tab
                 dbc.Tab([
                     self.create_tools_tab()
-                ], label="Tools", tab_id="tools")
+                ], label="Tools", tab_id="tools"),
+                
+                # Autopilot Tab
+                dbc.Tab([
+                    self.create_autopilot_tab()
+                ], label="Autopilot", tab_id="autopilot")
             ], id="tabs", active_tab="overview"),
             
             # Status Bar
@@ -174,89 +197,82 @@ class TrendClipDashboard:
                 ])
             ], width=6),
             
-            # Recent Activity
+            # Demo Chart
             dbc.Col([
                 dbc.Card([
-                    dbc.CardHeader("Recent Activity"),
+                    dbc.CardHeader("Demo Chart"),
                     dbc.CardBody([
-                        html.Div(id="recent-activity")
+                        dcc.Graph(id="demo-graph", figure=px.line(
+                            x=list(range(10)), 
+                            y=[i*i for i in range(10)], 
+                            title="Demo chart"
+                        ))
                     ])
                 ])
             ], width=12, className="mt-3")
         ])
     
     def create_api_setup_tab(self):
-        """Create the API setup tab content"""
+        """Create the API setup tab content with inline paste/upload functionality"""
         return dbc.Row([
-            # API Status
             dbc.Col([
                 dbc.Card([
-                    dbc.CardHeader("API Configuration Status"),
+                    dbc.CardHeader("API & Auth"),
                     dbc.CardBody([
-                        html.Div(id="api-status"),
-                        dbc.Button("Check API Status", id="check-api-status", color="primary", className="mt-2")
-                    ])
-                ])
-            ], width=6),
-            
-            # API Setup
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader("API Setup"),
-                    dbc.CardBody([
-                        dbc.Button("Setup YouTube OAuth", id="setup-youtube", color="success", className="me-2 mb-2"),
-                        dbc.Button("Setup API Keys", id="setup-api-keys", color="info", className="mb-2"),
-                        html.Div(id="api-setup-output", className="mt-3")
-                    ])
-                ])
-            ], width=6),
-            
-            # Configuration
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader("Configuration"),
-                    dbc.CardBody([
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Label("Region"),
-                                dbc.Select(
-                                    id="region-select",
-                                    options=[
-                                        {"label": "United Kingdom", "value": "GB"},
-                                        {"label": "United States", "value": "US"},
-                                        {"label": "Canada", "value": "CA"},
-                                        {"label": "Australia", "value": "AU"}
-                                    ],
-                                    value=self.config.get('region', 'GB')
-                                )
-                            ], width=6),
-                            dbc.Col([
-                                dbc.Label("CPM (GBP)"),
-                                dbc.Input(
-                                    id="cpm-input",
-                                    type="number",
-                                    step=0.1,
-                                    value=self.config.get('cpm_gbp', 3.5)
-                                )
-                            ], width=6)
-                        ], className="mb-3"),
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Label("Clip Duration (seconds)"),
-                                dbc.Input(
-                                    id="duration-input",
-                                    type="number",
-                                    value=self.config.get('clip_duration', 60)
-                                )
-                            ], width=6),
-                            dbc.Col([
-                                dbc.Button("Save Config", id="save-config", color="primary", className="mt-4")
-                            ], width=6)
+                        html.P("Create a Google OAuth client (Desktop) and place client_secret.json into .secrets. You can paste JSON or upload the file here."),
+                        html.Ul([
+                            html.Li(html.A("Google Cloud Console", href="https://console.cloud.google.com/", className="link", target="_blank")),
+                            html.Li(html.A("Create OAuth client (Desktop)", href="https://console.cloud.google.com/apis/credentials/oauthclient", className="link", target="_blank")),
+                            html.Li(html.A("Enable YouTube Data API v3", href="https://console.cloud.google.com/apis/library/youtube.googleapis.com", className="link", target="_blank")),
                         ]),
-                        html.Div(id="config-save-output", className="mt-3")
+                        html.Label("Paste client_secret.json contents"),
+                        dcc.Textarea(id="client-json", value="", style={"width":"100%","height":"140px"}),
+                        html.Div(style={"marginTop":"8px"}),
+                        html.Label("Or select client_secret.json file"),
+                        dcc.Upload(id="upload-client-json", children=html.Div(["Drag & Drop or ", html.A("Select file")]), multiple=False),
+                        html.Div(style={"marginTop":"8px"}),
+                        html.Label("Or paste a file path to client_secret.json"),
+                        dcc.Input(id="client-path", type="text", value="", style={"width":"100%"}),
+                        html.Div(style={"marginTop":"10px"}, children=[
+                            dbc.Button("Save client_secret.json", id="btn-save-secret", color="success", className="me-2"),
+                            dbc.Button("Clear token.json", id="btn-clear-token", color="warning", className="me-2"),
+                            dbc.Button("Test YouTube Login", id="btn-test-auth", color="info", className="me-2"),
+                            dbc.Button("Open .secrets", id="btn-open-secrets", color="secondary")
+                        ]),
+                        html.Div(id="api-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
                     ])
                 ])
-            ], width=12, className="mt-3")
+            ], width=12)
+        ])
+    
+    def create_upload_tab(self):
+        """Create the YouTube upload tab"""
+        return dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("YouTube Upload (Shorts)"),
+                    dbc.CardBody([
+                        dcc.Upload(id="upload-video", children=html.Div(["Drag & Drop or ", html.A("Select video")]), multiple=False),
+                        html.Br(), 
+                        html.Label("Title"), 
+                        dcc.Input(id="yt-title", type="text", value="My TrendClip", style={"width":"100%"}),
+                        html.Br(), 
+                        html.Label("Description"), 
+                        dcc.Textarea(id="yt-desc", value="", style={"width":"100%","height":"100px"}),
+                        html.Br(), 
+                        html.Label("Tags (comma separated)"), 
+                        dcc.Input(id="yt-tags", type="text", value="trendclip,shorts", style={"width":"100%"}),
+                        html.Br(), 
+                        html.Label("Privacy"), 
+                        dcc.Dropdown(id="yt-privacy", options=[
+                            {"label":v,"value":v} for v in ("private","unlisted","public")
+                        ], value="private"),
+                        html.Br(), 
+                        dbc.Button("Upload", id="btn-upload", color="primary"),
+                        html.Div(id="upload-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+                    ])
+                ])
+            ], width=12)
         ])
     
     def create_trending_tab(self):
@@ -339,14 +355,27 @@ class TrendClipDashboard:
     def create_tools_tab(self):
         """Create the tools tab content"""
         return dbc.Row([
-            # Video Processing
+            # Self-Test
             dbc.Col([
                 dbc.Card([
-                    dbc.CardHeader("Video Processing"),
+                    dbc.CardHeader("Self-Test"),
                     dbc.CardBody([
-                        dbc.Button("Test Video Processing", id="test-video", color="primary", className="me-2"),
-                        dbc.Button("Process Sample", id="process-sample", color="success", className="me-2"),
-                        html.Div(id="video-processing-output", className="mt-3")
+                        dbc.Button("Run Self-Test", id="btn-selftest", color="primary", className="me-2"),
+                        dbc.Button("Open Logs Folder", id="btn-open-logs", color="secondary"),
+                        html.Div(id="selftest-output", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
+                        dcc.Graph(id="selftest-figure"),
+                    ])
+                ])
+            ], width=6),
+            
+            # Packager
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader("Packager"),
+                    dbc.CardBody([
+                        html.P("Create a distributable ZIP (no venv/tokens)."),
+                        dbc.Button("Create ZIP", id="btn-pack", color="info"),
+                        html.Div(id="pack-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
                     ])
                 ])
             ], width=6),
@@ -362,17 +391,24 @@ class TrendClipDashboard:
                         html.Div(id="system-tools-output", className="mt-3")
                     ])
                 ])
-            ], width=6),
-            
-            # Logs
+            ], width=12, className="mt-3")
+        ])
+    
+    def create_autopilot_tab(self):
+        """Create the autopilot tab content"""
+        return dbc.Row([
             dbc.Col([
                 dbc.Card([
-                    dbc.CardHeader("System Logs"),
+                    dbc.CardHeader("Autopilot"),
                     dbc.CardBody([
-                        html.Div(id="system-logs", style={"maxHeight": "300px", "overflow": "auto"})
+                        html.P("Edit urls.txt, then run one cycle. Outputs to /dist."),
+                        dbc.Button("Open urls.txt", id="btn-open-urls", color="primary", className="me-2"),
+                        dbc.Button("Open dist Folder", id="btn-open-dist", color="secondary", className="me-2"),
+                        dbc.Button("Run Once", id="btn-do1", color="success"),
+                        html.Div(id="do1-status", style={"whiteSpace":"pre-wrap","marginTop":"10px"}),
                     ])
                 ])
-            ], width=12, className="mt-3")
+            ], width=12)
         ])
     
     def setup_callbacks(self):
@@ -419,99 +455,261 @@ class TrendClipDashboard:
             except Exception as e:
                 return html.P(f"❌ Status check failed: {e}")
         
+        # API Setup callbacks
         @self.app.callback(
             Output("api-status", "children"),
-            Input("check-api-status", "n_clicks")
+            Input("btn-open-secrets", "n_clicks"),
+            prevent_initial_call=True
         )
-        def check_api_status(n_clicks):
-            if n_clicks is None:
-                return "Click 'Check API Status' to verify configuration"
-            
+        def open_secrets(n):
             try:
-                if not self.api_wizard:
-                    return "❌ API Wizard not available"
-                
-                # Check environment variables
-                env_keys = self.api_wizard.check_environment_variables()
-                
-                # Check OAuth
-                oauth_ready = self.api_wizard.client_secret_file.exists() and self.api_wizard.token_file.exists()
-                
-                status_items = []
-                status_items.append(f"Environment Keys: {'✅' if env_keys else '❌'}")
-                status_items.append(f"YouTube OAuth: {'✅' if oauth_ready else '❌'}")
-                
-                if env_keys:
-                    status_items.append("Found keys:")
-                    for key in env_keys.keys():
-                        status_items.append(f"  - {key}")
-                
-                return [html.P(item) for item in status_items]
-                
-            except Exception as e:
-                return html.P(f"❌ API status check failed: {e}")
-        
-        @self.app.callback(
-            Output("api-setup-output", "children"),
-            Input("setup-youtube", "n_clicks"),
-            Input("setup-api-keys", "n_clicks")
-        )
-        def handle_api_setup(youtube_clicks, api_keys_clicks):
-            ctx = callback_context
-            if not ctx.triggered:
-                return ""
-            
-            button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-            
-            try:
-                if button_id == "setup-youtube" and self.api_wizard:
-                    success = self.api_wizard.setup_youtube_oauth()
-                    return f"{'✅' if success else '❌'} YouTube OAuth setup {'completed' if success else 'failed'}"
-                
-                elif button_id == "setup-api-keys" and self.api_wizard:
-                    api_keys = self.api_wizard.setup_api_keys()
-                    if api_keys:
-                        self.api_wizard.save_api_keys_to_env_file(api_keys)
-                        return f"✅ {len(api_keys)} API keys configured"
-                    else:
-                        return "⚠️ No API keys entered"
-                
-                return ""
-                
-            except Exception as e:
-                return f"❌ Setup failed: {e}"
-        
-        @self.app.callback(
-            Output("config-save-output", "children"),
-            Input("save-config", "n_clicks"),
-            State("region-select", "value"),
-            State("cpm-input", "value"),
-            State("duration-input", "value")
-        )
-        def save_configuration(n_clicks, region, cpm, duration):
-            if n_clicks is None:
-                return ""
-            
-            try:
-                if not self.api_wizard:
-                    return "❌ API Wizard not available"
-                
-                config_settings = {
-                    'region': region,
-                    'cpm_gbp': float(cpm),
-                    'clip_duration': int(duration)
-                }
-                
-                success = self.api_wizard.update_config(config_settings)
-                if success:
-                    self.config.update(config_settings)
-                    return "✅ Configuration saved"
+                if os.name == "nt":
+                    os.startfile(str(self.secrets_dir))
                 else:
-                    return "❌ Failed to save configuration"
-                
+                    import subprocess
+                    subprocess.Popen(["open" if sys.platform=="darwin" else "xdg-open", str(self.secrets_dir)])
+                return f"Opened: {self.secrets_dir}"
+            except Exception as e:
+                return f"Open failed: {e}"
+        
+        def _save_client_json_from_text(text: str) -> str:
+            if not text.strip():
+                return "Paste JSON or upload a file."
+            try:
+                obj = json.loads(text)
+            except Exception as e:
+                return f"Invalid JSON: {e}"
+            out = self.secrets_dir / "client_secret.json"
+            out.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+            return f"✅ Saved client_secret.json → {out}"
+
+        def _save_client_json_from_upload(contents: str, filename: str) -> str:
+            if not contents: 
+                return "No file provided."
+            try:
+                header, data = contents.split(",", 1)
+                raw = base64.b64decode(data)
+                obj = json.loads(raw.decode("utf-8"))
+            except Exception as e:
+                return f"Upload parse failed: {e}"
+            out = self.secrets_dir / "client_secret.json"
+            out.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+            return f"✅ Saved client_secret.json from {filename} → {out}"
+
+        @self.app.callback(
+            Output("api-status", "children", allow_duplicate=True),
+            Input("btn-save-secret", "n_clicks"),
+            State("client-json", "value"),
+            State("upload-client-json", "contents"),
+            State("upload-client-json", "filename"),
+            State("client-path", "value"),
+            prevent_initial_call=True
+        )
+        def save_secret(n, pasted, up_contents, up_name, path_value):
+            try:
+                if up_contents:
+                    return _save_client_json_from_upload(up_contents, up_name or "upload")
+                if pasted and pasted.strip():
+                    return _save_client_json_from_text(pasted)
+                if path_value and str(path_value).strip():
+                    p = pathlib.Path(path_value.strip('"'))
+                    if not p.exists():
+                        return f"Path not found: {p}"
+                    try:
+                        text = p.read_text(encoding="utf-8")
+                    except Exception:
+                        # try binary decode
+                        text = p.read_bytes().decode("utf-8", errors="ignore")
+                    return _save_client_json_from_text(text)
+                return "Provide JSON (paste, upload, or path)."
             except Exception as e:
                 return f"❌ Save failed: {e}"
+
+        @self.app.callback(
+            Output("api-status", "children", allow_duplicate=True), 
+            Input("btn-clear-token", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def clear_token(n):
+            try:
+                tok = self.secrets_dir / "token.json"
+                if tok.exists(): 
+                    tok.unlink()
+                return "🔄 token.json cleared."
+            except Exception as e:
+                return f"Clear failed: {e}"
+
+        @self.app.callback(
+            Output("api-status", "children", allow_duplicate=True), 
+            Input("btn-test-auth", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def test_auth(n):
+            try:
+                from youtube_uploader import authenticate
+                authenticate(installed_app_port=0)
+                return "✅ Auth OK. Token saved in .secrets/token.json"
+            except Exception as e:
+                return f"❌ Auth failed: {e}"
         
+        # Upload callbacks
+        def _save_uploaded(contents: str, filename: str) -> Path:
+            header, data = contents.split(",", 1)
+            binary = base64.b64decode(data)
+            out_dir = self.dist_dir / "uploads"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / filename
+            with open(out_path, "wb") as f: 
+                f.write(binary)
+            return out_path
+
+        @self.app.callback(
+            Output("upload-status", "children"), 
+            Input("btn-upload", "n_clicks"),
+            State("upload-video", "contents"), 
+            State("upload-video", "filename"),
+            State("yt-title", "value"), 
+            State("yt-desc", "value"), 
+            State("yt-tags", "value"),
+            State("yt-privacy", "value"), 
+            prevent_initial_call=True
+        )
+        def handle_upload(n, contents, filename, title, desc, tags_csv, privacy):
+            try:
+                if not contents or not filename: 
+                    return "Please select a video file first."
+                saved = _save_uploaded(contents, filename)
+                tags = [t.strip() for t in (tags_csv or "").split(",") if t.strip()]
+                from youtube_uploader import upload_video
+                resp = upload_video(
+                    str(saved), 
+                    title=title or pathlib.Path(filename).stem, 
+                    description=desc or "", 
+                    tags=tags, 
+                    privacy_status=privacy or "private"
+                )
+                vid = resp.get("id") or (resp.get("snippet", {}) or {}).get("resourceId", {}).get("videoId")
+                return f"✅ Uploaded. Video ID: {vid or '<unknown>'}\nFile: {saved}"
+            except Exception as e:
+                return f"❌ Upload failed: {e}"
+        
+        # Packager callback
+        @self.app.callback(
+            Output("pack-status", "children"), 
+            Input("btn-pack", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def create_zip(n):
+            try:
+                import zipfile
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                zip_path = self.dist_dir / f"TrendClipOne_{ts}.zip"
+                include = [
+                    "TrendClipDashboard_Standalone.py","wizard.py","video_helpers.py",
+                    "youtube_uploader.py","autopilot.py","jobs.py","requirements.txt",
+                    "config.yaml","assets/","data/"
+                ]
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+                    for item in include:
+                        p = self.base_path / item
+                        if p.is_dir():
+                            for root, _, files in os.walk(p):
+                                for f in files:
+                                    fp = pathlib.Path(root) / f
+                                    z.write(fp, fp.relative_to(self.base_path))
+                        elif p.exists(): 
+                            z.write(p, p.relative_to(self.base_path))
+                try:
+                    import shutil
+                    desktop = pathlib.Path.home() / "Desktop"
+                    shutil.copy2(zip_path, desktop)
+                except Exception: 
+                    pass
+                return f"Created ZIP at: {zip_path}"
+            except Exception as e:
+                return f"Failed to pack: {e}"
+        
+        # Self-test callback
+        @self.app.callback(
+            Output("selftest-output", "children"), 
+            Output("selftest-figure", "figure"), 
+            Input("btn-selftest", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def run_selftest(n):
+            try:
+                (self.logs_dir / "selftest.txt").write_text(
+                    f"Self-test at {datetime.now().isoformat()}\n", 
+                    encoding="utf-8"
+                )
+                fig = px.scatter(
+                    x=list(range(30)), 
+                    y=[i * 0.5 for i in range(30)], 
+                    title="Self-test scatter"
+                )
+                return "✅ Self-test passed", fig
+            except Exception as e:
+                fig = px.scatter(x=[0], y=[0], title="Self-test error")
+                return f"❌ Self-test failed: {e}", fig
+        
+        # Autopilot callbacks
+        @self.app.callback(
+            Output("do1-status", "children"), 
+            Input("btn-do1", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def do1(n):
+            try:
+                import subprocess
+                py_exe = os.environ.get("TRENDCLIP_VENV_PY", sys.executable)
+                p = subprocess.run(
+                    [py_exe, str(self.base_path / "autopilot.py")], 
+                    capture_output=True, 
+                    text=True, 
+                    cwd=str(self.base_path)
+                )
+                log = self.logs_dir / "autopilot.log"
+                tail = (log.read_text(encoding="utf-8") if log.exists() else "")[-2000:]
+                return f"Return: {p.returncode}\n--- autopilot.log (tail) ---\n{tail}"
+            except Exception as e:
+                return f"Do1 failed: {e}"
+
+        @self.app.callback(
+            Output("do1-status", "children", allow_duplicate=True), 
+            Input("btn-open-urls", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def open_urls(n):
+            u = self.base_path / "urls.txt"
+            if not u.exists(): 
+                u.write_text("# Put one URL per line (YouTube/TikTok/etc.)\n", encoding="utf-8")
+            try:
+                if os.name == "nt":
+                    os.startfile(str(u))
+                else:
+                    import subprocess
+                    subprocess.Popen(["open" if sys.platform=="darwin" else "xdg-open", str(u)])
+                return f"Opened: {u}"
+            except Exception as e:
+                return f"Open failed: {e}"
+
+        @self.app.callback(
+            Output("do1-status", "children", allow_duplicate=True), 
+            Input("btn-open-dist", "n_clicks"), 
+            prevent_initial_call=True
+        )
+        def open_dist(n):
+            try:
+                if os.name == "nt":
+                    os.startfile(str(self.dist_dir))
+                else:
+                    import subprocess
+                    subprocess.Popen(["open" if sys.platform=="darwin" else "xdg-open", str(self.dist_dir)])
+                return f"Opened: {self.dist_dir}"
+            except Exception as e:
+                return f"Open failed: {e}"
+        
+        # Other existing callbacks...
         @self.app.callback(
             Output("quick-actions-output", "children"),
             Input("run-api-wizard", "n_clicks"),

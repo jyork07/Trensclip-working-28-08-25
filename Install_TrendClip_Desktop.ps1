@@ -969,6 +969,9 @@ if ($deps.Issues.Count -gt 0) {
 # Install TrendClip tools (FFmpeg, yt-dlp)
 Install-TrendClipTools
 
+# Ensure dashboard and desktop Python entry files exist (adds in-Dash API paste UI)
+Write-TrendClipAppFiles
+
 # Version & env
 Write-TextFileUtf8 -Path (Join-Path $BASE 'VERSION') -Content $Version
 $port = Get-FreePort -Start 8700 -End 8999
